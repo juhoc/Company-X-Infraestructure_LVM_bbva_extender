@@ -1,0 +1,147 @@
+---
+#------------------Obtener lista Disco para VGAPPS------------------#
+- block:
+    - name: Obtener lista de discos previa al agregado de disco
+      shell: "{{ chknwdsk }} > {{ snapdisks }}/snapdisk_prev"
+#------------------Agregar Disco para VGAPPS------------------#
+# - block:
+#     - name: Copiar script para obtener informacion de la VM
+#       become: true
+#       copy:
+#         src: "files/{{ scriptsps1 }}"
+#         dest: "{{ varoptasbd }}"
+#         mode: '0744'
+#         owner: bvmuxat2
+#         group: automate
+#       loop:
+#         - busca_vm1.ps1
+#         - AgregarDisco.ps1
+#       loop_control:
+#         loop_var: scriptsps1
+
+#     - name: Ejecutar script busca_vm1.ps1
+#       shell: |
+#         ./busca_vm.ps1 -vmName "{{ ansible_limit.split('.')[0] }}"
+#       args:
+#         executable: /bin/pwsh
+#         chdir: "{{ varoptasb }}"
+#       no_log: true
+
+#     - name: Obtener informacion de la ejecucion del script busca_vm.ps1
+#       shell: |
+#         timefile=$(date +%Y%m%d_%H)
+#         filelog=$(ls -1rt | grep $timefile | tail -1)
+#         cat $filelog | grep Parametros | cut -d: -f2 | sort | tail -1 | cut -d, -f2
+#       args:
+#         chdir: "{{ varoptasb }}"
+#       register: vminfo1
+
+#     - set_fact:
+#         strcom: "{{ vminfo1.stdout | trim }}"
+#         ipvcvm: "{{ vminfo1.stdout.split(' ')[0] }}"
+#         dtsvcm: "{{ vminfo1.stdout.split(' ')[2] }}"
+
+#     - name: Ejecutar script powercli script AgregarDisco.ps1
+#       shell: |
+#         Connect-VIServer -server {{ ipvcvm }} -User {{ usrvcvm }} -Password '{{ pwdvcvm | trim }}' -ErrorAction Stop
+#         ./AgregarDisco.ps1 {{ strcom }} 
+#         Disconnect-VIServer -Server {{ ipvcvm }} -Force -confirm:$false
+#         sleep 30
+#       args:
+#         executable: /bin/pwsh
+#         chdir: /var/opt/ansible
+#       register: agregrdisco_result
+#       no_log: true
+
+#     - name: Resultado de ejecutar script powercli script AgregarDisco.ps1
+#       assert:
+#        that:
+#          - "'No hay' not in agregrdisco_result.stdout"
+#        fail_msg: "No hay suficiente espacio en el DataStore {{ dtsvcm }}"
+#        success_msg: "Hay suficiente espacio en el DataStore {{ dtsvcm }}"
+
+#     - name: Borrar script busca_vm.ps1
+#       become: true
+#       file:
+#         path: "{{ varoptasb }}/{{ delscriptsps }}"
+#         state: absent
+#       loop:
+#         - busca_vm1.ps1
+#         - AgregarDisco.ps1
+#       loop_control:
+#         loop_var: delscriptsps
+
+#     - include_tasks: lvm_delete_logs.yml
+#   delegate_to: lvpinsatchsmx01.bvm.bluecare.kyndryl.net
+#------------------Validar Disco para VGAPPS------------------#
+- block:
+    - name: Pausa para anexar nuevo discos
+      pause:
+        minutes: 1
+        prompt: "Esperar a que se anexe el nuevo disco"
+
+    - name: Ejecutar scaneo de nuevos dispositivo tipo disco
+      become: true
+      shell: "{{ scandevices }}"
+
+    - name: Obtener lista de discos posterior al agregado de disco
+      shell: "{{ chknwdsk }} > {{ snapdisks }}/snapdisk_post"
+
+    - name: Obtener diferencias de discos snapdisk_post vs snapdisk_prev
+      shell: "{{ diffdisk }}"
+      register: dskinfo1
+
+    - set_fact:
+        s_fsddisk: "/dev/{{ dskinfo1.stdout.split(',')[0] | default('NON_DISK_DETECT') }}"
+
+    - name: Resultado de la validar antes de crear el LV {{ lvnombre }}
+      assert:
+        that:
+          - "'NON_DISK_DETECT' not in s_fsddisk"
+        fail_msg: "{{ s_fsddisk }}, Favor de escalar con Infraestructura Linux-INTEL"
+        success_msg: "Dispositivo {{ s_fsddisk }} detectado, continua proceso de LVM"
+#    ------------------ Crrear VG y LV ------------------#
+- block:
+    - name: Obtener discos asociados al {{ vgnombre }}
+      become: true
+      shell: "{{ pvvgdsks }}"
+      register: dskinfo2
+
+    - set_fact:
+        all_pvs: "{{ dskinfo2.stdout_lines + [s_fsddisk] }}"
+
+    - name: Extender VolumeGroup {{ vgnombre }}
+      become: true
+      lvg:
+        vg: "{{ vgnombre }}"
+        pvs: "{{ all_pvs }}"
+
+    - name: Crear LogicaVolume {{ lvnombre }}
+      become: true
+      lvol:
+        vg: "{{ vgnombre }}"
+        lv: "{{ lvnombre }}"
+        size: "{{ lvcapacidad }}g"
+        force: yes
+
+    - name: Crear punto de montura {{ mpnombre }}
+      become: true
+      file:
+        path: "{{ mpnombre }}"
+        state: directory
+        mode: "0755"
+
+    - name: Formatear LogicaVolume {{ lvnombre }}-{{ fstipo }}
+      become: true
+      filesystem:
+        fstype: "{{ fstipo }}"
+        dev: "/dev/{{ vgnombre }}/{{ lvnombre }}"
+
+    - name: Montar el LogicaVolume {{ lvnombre }}-{{ mpnombre }}
+      become: true
+      mount:
+        path: "{{ mpnombre }}"
+        src: "/dev/{{ vgnombre }}/{{ lvnombre }}"
+        fstype: "{{ fstipo }}"
+        state: mounted
+

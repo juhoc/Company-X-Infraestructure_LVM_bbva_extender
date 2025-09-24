@@ -1,0 +1,414 @@
+---
+# Playbook: unified_storage_management.yaml
+# Versión: 6.0 (Gestión combinada de discos y LVM)
+# Descripción: Gestión profesional de discos físicos, particiones y LVM
+
+# - name: Gestión Unificada de Almacenamiento
+#   hosts: all
+#   become: true
+#   gather_facts: true
+
+#   vars:
+#     # Modo de operación principal
+#     operation_mode: "{{ 'manage' if operation is defined and operation != '' else 'analyze' }}"
+
+#     # Variables para gestión de discos básicos
+#     operation: "" # analyze|partition|lvm
+#     target_disk: ""
+
+#     # Parámetros para particiones
+#     partition_params:
+#       size: ""
+#       fs_type: ""
+#       mount_point: ""
+#       part_type: ""
+#       part_label: ""
+
+#     # Parámetros para LVM
+#     lvm_params:
+#       action: "" # create_vg|extend_vg|create_lv|extend_lv
+#       vg_name: ""
+#       lv_name: ""
+#       lv_size: ""
+#       lv_fs_type: ""
+#       lv_mount_point: ""
+#     target_disks: []
+
+- block:
+    ### SECCIÓN 1: DETECCIÓN DE ALMACENAMIENTO ###
+    - name: Obtener lista completa de discos
+      become: true
+      ansible.builtin.shell: |
+        set -o pipefail && lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT -d -n -p | grep -E '^/dev/(sd|hd|vd|xvd|nvme)[a-z0-9]+' | grep 'disk'
+      register: all_disks
+      changed_when: false
+
+    - name: Obtener información de particiones
+      become: true
+      ansible.builtin.shell: |
+        set -o pipefail && lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT -n -p | grep -v 'disk$'
+      register: all_partitions
+      changed_when: false
+
+    - name: Obtener información LVM
+      when: operation_mode != "manage"
+      block:
+        - name: Listar Physical Volumes
+          become: true
+          ansible.builtin.command: pvs --noheadings -o pv_name,vg_name,size,free
+          register: pv_info
+          changed_when: false
+          ignore_errors: true # Corregido a 'true' para consistencia
+
+        - name: Listar Volume Groups
+          become: true
+          ansible.builtin.command: vgs --noheadings -o vg_name,vg_size,vg_free
+          register: vg_info
+          changed_when: false
+          ignore_errors: true # Corregido a 'true' para consistencia
+
+        - name: Listar Logical Volumes
+          become: true
+          ansible.builtin.command: lvs --noheadings -o lv_name,vg_name,lv_size,path
+          register: lv_info
+          changed_when: false
+          ignore_errors: true # Corregido a 'true' para consistencia
+
+    ### SECCIÓN 2: ANÁLISIS COMPLETO ###
+    - name: Mostrar resumen completo de almacenamiento
+      when: operation_mode == "analyze"
+      ansible.builtin.debug:
+        msg: |
+          ===== RESUMEN DE ALMACENAMIENTO =====
+          === DISCOS FÍSICOS ===
+          {% for disk in all_disks.stdout_lines %}
+          - {{ disk }}
+          {% endfor %}
+
+          === PARTICIONES ===
+          {% if all_partitions.stdout %}
+          {% for part in all_partitions.stdout_lines %}
+          - {{ part }}
+          {% endfor %}
+          {% else %}
+          No se encontraron particiones
+          {% endif %}
+
+          === VOLUMENES LVM ===
+          PVs:
+          {% if pv_info.stdout %}
+          {{ pv_info.stdout | replace("  ", " ") | trim }}
+          {% else %}
+          No hay Physical Volumes
+          {% endif %}
+
+          VGs:
+          {% if vg_info.stdout %}
+          {{ vg_info.stdout | replace("  ", " ") | trim }}
+          {% else %}
+          No hay Volume Groups
+          {% endif %}
+
+          LVs:
+          {% if lv_info.stdout %}
+          {{ lv_info.stdout | replace("  ", " ") | trim }}
+          {% else %}
+          No hay Logical Volumes
+          {% endif %}
+          ====================================
+
+    ### SECCIÓN 3: VALIDACIÓN DE OPERACIONES ###
+    - name: Validar parámetros para operaciones
+      when: operation_mode == "manage"
+      block:
+        - name: Verificar operación_action válida
+          ansible.builtin.assert:
+            that: operation in ['analyze', 'partition', 'lvm']
+            msg: "Operación no válida. Use: analyze, partition o lvm"
+
+        - name: Validar parámetros para análisis de disco
+          when: operation == "analyze"
+          ansible.builtin.assert:
+            that: target_disk != ""
+            msg: "Debe especificar un target_disk para análisis"
+          
+        - name: Validar parámetros para particiones
+          when: operation == "partition"
+          block:
+            - name: Verificar disco objetivo
+              ansible.builtin.assert:
+                that: target_disk != ""
+                msg: "Debe especificar target_disk"
+
+            - name: Verificar parámetros de partición
+              ansible.builtin.assert:
+                that:
+                  - partition_params.size != ""
+                  - partition_params.fs_type != ""
+                  - partition_params.mount_point != ""
+                msg: "Faltan parámetros obligatorios para partición (size, fs_type, mount_point)"
+
+        - name: Validar parámetros para LVM
+          when: operation == "lvm"
+          block:
+            - name: Verificar acción LVM válida
+              ansible.builtin.assert:
+                that: lvm_params.action in ['create_vg', 'extend_vg', 'create_lv', 'extend_lv']
+                msg: "Acción LVM no válida"
+
+            - name: Validar parámetros para VG
+              ansible.builtin.assert:
+                that:
+                  - lvm_params.vg_name != ""
+                  - target_disks | length > 0
+                msg: "Faltan parámetros para VG (vg_name o target_disks)"
+              when: "'vg' in lvm_params.action"
+
+            - name: Validar parámetros para LV
+              ansible.builtin.assert:
+                that:
+                  - lvm_params.lv_name != ""
+                  - lvm_params.lv_size != ""
+                  - lvm_params.lv_fs_type != "" if lvm_params.action == 'create_lv' else true
+                msg: "Faltan parámetros para LV"
+              when: "'lv' in lvm_params.action"
+
+    ### SECCIÓN 4: OPERACIONES CON DISCOS ###
+    - name: Ejecutar operaciones en discos
+      when: operation_mode == "manage"
+      block:
+        #### ANÁLISIS DE DISCO ESPECÍFICO ####
+        - name: Analizar disco específico
+          when: operation == "analyze"
+          block:
+            - name: Obtener información detallada
+              become: true
+              ansible.builtin.shell: |
+                set -o pipefail && echo "===== ANÁLISIS DETALLADO: {{ target_disk }} ====="
+                echo "--- INFORMACIÓN DE BLOQUES ---"
+                lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT,LABEL,UUID "{{ target_disk }}" # Añadí comillas para seguridad
+                echo "--- TABLA DE PARTICIONES ---"
+                parted -s "{{ target_disk }}" unit GB print free # Añadí comillas
+                echo "--- INFORMACIÓN SMART ---"
+                smartctl -i "{{ target_disk }}" | grep -E 'Model|Capacity|Rotation|Health' || echo "SMART no disponible" # Añadí comillas
+              register: disk_analysis
+              changed_when: false
+
+            - name: Mostrar análisis
+              ansible.builtin.debug:
+                msg: "{{ disk_analysis.stdout }}"
+
+        #### GESTIÓN DE PARTICIONES ####
+        - name: Manejar particiones
+          when: operation == "partition"
+          block:
+            - name: Verificar espacio libre
+              become: true
+              ansible.builtin.shell: |
+                set -o pipefail && parted -s {{ target_disk }} unit GB print free | grep "Free Space" | tail -1
+              register: free_space
+              changed_when: false
+
+            - name: Crear partición
+              become: true
+              ansible.builtin.command: |
+                parted -s {{ target_disk }} mkpart {{ partition_params.part_type | default('primary') }} \
+                {{ partition_params.fs_type }} \
+                {{ free_space.stdout.split()[1] }} \
+                {{ (free_space.stdout.split()[1] | replace('GB', '') | float + partition_params.size | replace('G', '') | float) }}GB
+              register: partition_created
+              changed_when: partition_created.rc != 0
+
+            - name: Obtener número de partición
+              become: true
+              ansible.builtin.shell: |
+                set -o pipefail && lsblk -n -o NAME {{ target_disk }} | tail -1
+              register: new_partition
+              changed_when: false
+
+            - name: Formatear partición
+              become: true
+              ansible.builtin.command: |
+                mkfs.{{ partition_params.fs_type }} {{ partition_params.part_label | default('', true) | ternary('-L ' + partition_params.part_label + ' ', '') }}{{ target_disk }}{{ new_partition.stdout[-1] }}
+              register: out_make_fs
+              changed_when: out_make_fs.rc
+            - name: Configurar montaje
+              ansible.posix.mount:
+                path: "{{ partition_params.mount_point }}"
+                src: "UUID=$(blkid -s UUID -o value {{ target_disk }}{{ new_partition.stdout[-1] }})"
+                fstype: "{{ partition_params.fs_type }}"
+                state: mounted
+                opts: defaults
+                fstab: true # Corregido a 'true'
+
+        #### GESTIÓN LVM ####
+        - name: Manejar operaciones LVM
+          when: operation == "lvm"
+          block:
+            ##### CREAR VOLUME GROUP #####
+            - name: Crear nuevo Volume Group
+              when: lvm_params.action == "create_vg"
+              block:
+                - name: Crear Physical Volumes
+                  become: true
+                  ansible.builtin.command: pvcreate {{ item }}
+                  with_items: "{{ target_disks }}"
+                  register: out_pv_create
+                  changed_when: out_pvcreate.rc != 0
+
+                - name: Crear Volume Group
+                  become: true
+                  ansible.builtin.command: vgcreate {{ lvm_params.vg_name }} {{ target_disks | join(' ') }}
+                  register: vg_created
+                  changed_when: vg_created.rc != 0
+
+                - name: Verificar VG creado
+                  become: true
+                  ansible.builtin.command: vgs {{ lvm_params.vg_name }}
+                  register: vg_check
+                  changed_when: false
+
+            ##### EXTENDER VOLUME GROUP #####
+            - name: Extender Volume Group
+              when: lvm_params.action == "extend_vg"
+              block:
+                - name: Verificar discos disponibles
+                  become: true
+                  ansible.builtin.shell: |
+                    set -o pipefail && for disk in {{ target_disks | join(' ') }}; do
+                      if pvs "$disk" 2>/dev/null; then
+                        echo "El disco $disk ya está en uso"
+                        exit 1
+                      fi
+                    done
+                  register: disk_check
+                  changed_when: false
+
+                - name: Crear PVs en discos nuevos
+                  become: true
+                  ansible.builtin.command: pvcreate {{ item }}
+                  with_items: "{{ target_disks }}"
+                  register: out_pv_create
+                  changed_when: out_pvcreate.rc != 0
+
+                - name: Extender VG
+                  become: true
+                  ansible.builtin.command: vgextend {{ lvm_params.vg_name }} {{ target_disks | join(' ') }}
+                  register: vg_extended
+                  changed_when: vg_extend.rc != 0
+
+                - name: Verificar VG extendido
+                  become: true
+                  ansible.builtin.command: vgs {{ lvm_params.vg_name }}
+                  register: vg_after_extend
+                  changed_when: false
+
+            ##### CREAR LOGICAL VOLUME #####
+            - name: Crear Logical Volume
+              when: lvm_params.action == "create_lv"
+              block:
+                - name: Verificar espacio en VG
+                  become: true
+                  ansible.builtin.command: vgs --noheadings -o vg_free {{ lvm_params.vg_name }}
+                  register: vg_free_space
+                  changed_when: false
+
+                - name: Crear LV
+                  become: true
+                  ansible.builtin.command: |
+                    lvcreate -n {{ lvm_params.lv_name }} -L {{ lvm_params.lv_size }} {{ lvm_params.vg_name }}
+                  register: lv_created
+                  changed_when: lv_create.rc != 0
+
+                - name: Formatear LV
+                  become: true
+                  ansible.builtin.command: |
+                    mkfs.{{ lvm_params.lv_fs_type }} /dev/{{ lvm_params.vg_name }}/{{ lvm_params.lv_name }}
+                  register: out_format
+                  changed_when: out_format.rc != 0
+
+                - name: Configurar montaje persistente
+                  when: lvm_params.lv_mount_point != ""
+                  block:
+                    - name: Crear directorio
+                      ansible.builtin.file:
+                        path: "{{ lvm_params.lv_mount_point }}"
+                        state: directory
+                        mode: '0755'
+                      register: out_make_dir
+                      changed_when: out_make_dir.rc != 0
+
+                    - name: Configurar fstab
+                      ansible.builtin.lineinfile:
+                        path: /etc/fstab
+                        line: "/dev/{{ lvm_params.vg_name }}/{{ lvm_params.lv_name }} {{ lvm_params.lv_mount_point }} {{ lvm_params.lv_fs_type }} defaults 0 0"
+                        state: present
+
+                    - name: Montar LV
+                      become: true
+                      # Usando ansible.posix.mount en lugar de command
+                      ansible.posix.mount:
+                        path: "{{ lvm_params.lv_mount_point }}"
+                        src: "/dev/{{ lvm_params.vg_name }}/{{ lvm_params.lv_name }}"
+                        fstype: "{{ lvm_params.lv_fs_type }}"
+                        state: mounted
+                        opts: defaults # Asegúrate de que los permisos y opciones sean correctos
+
+            ##### EXTENDER LOGICAL VOLUME #####
+            - name: Extender Logical Volume
+              when: lvm_params.action == "extend_lv"
+              block:
+                - name: Verificar espacio en VG
+                  become: true
+                  ansible.builtin.command: vgs --noheadings -o vg_free {{ lvm_params.vg_name }}
+                  register: vg_free_space
+                  changed_when: false
+
+                - name: Extender LV
+                  become: true
+                  ansible.builtin.command: |
+                    lvextend -L +{{ lvm_params.lv_size }} /dev/{{ lvm_params.vg_name }}/{{ lvm_params.lv_name }}
+                  register: lv_extended
+                  changed_when: lv_extended.rc != 0
+
+                - name: Redimensionar filesystem
+                  become: true
+                  ansible.builtin.command: |
+                    {% if lvm_params.lv_fs_type == 'xfs' %}
+                    xfs_growfs /dev/{{ lvm_params.vg_name }}/{{ lvm_params.lv_name }}
+                    {% else %}
+                    resize2fs /dev/{{ lvm_params.vg_name }}/{{ lvm_params.lv_name }}
+                    {% endif %}
+                  register: out_extend_fs
+                  changed_when: out_extend_fs.rc
+
+    ### SECCION 5: REPORTE FINAL ###
+    - name: Mostrar resumen de operación
+      ansible.builtin.debug:
+        msg: |
+          ===== RESUMEN DE OPERACION =====
+          {% if operation_mode == "analyze" %}
+          Análisis completo mostrado arriba
+          {% else %}
+          Acción realizada: {{ operation }}
+          {% if operation == "analyze" %}
+          Disco analizado: {{ target_disk }}
+          {% elif operation == "partition" %}
+          Partición creada en: {{ target_disk }}
+          Punto de montaje: {{ partition_params.mount_point }}
+          {% elif operation == "lvm" %}
+          Operación LVM: {{ lvm_params.action }}
+          {% if 'vg' in lvm_params.action %}
+          Volume Group: {{ lvm_params.vg_name }}
+          Discos utilizados: {{ target_disks | join(', ') }}
+          {% elif 'lv' in lvm_params.action %}
+          Logical Volume: {{ lvm_params.lv_name }}
+          Tamaño: {{ lvm_params.lv_size }}
+          {% if lvm_params.action == 'create_lv' %}
+          Filesystem: {{ lvm_params.lv_fs_type }}
+          Punto de montaje: {{ lvm_params.lv_mount_point | default('No montado') }}
+          {% endif %}
+          {% endif %}
+          {% endif %}
+          {% endif %}
+          ===============================

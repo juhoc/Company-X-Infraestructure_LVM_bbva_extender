@@ -1,0 +1,32 @@
+---
+#------------------Particinar Disco para VGAPPS------------------#
+- block:
+    - name: Valida el tamaño de {{ lvnombre }}
+      become: true
+      shell: "{{ lvchecksz }}"
+      register: lvinfo2
+
+    - name: Valida el porcetaje de uso de {{ lvnombre }}
+      become: true
+      shell: "{{ lvcheckpj }}"
+      register: lvinfo3
+
+    - set_fact:
+        s_flvftsz: "{{ lvinfo2.stdout | default('0') | trim }}"
+        s_flvfspj: "{{ lvinfo3.stdout | default('0') | trim }}"
+
+    - set_fact:
+        run_playbook: |
+          {% if (s_flvftsz | int == 0) and (s_flvfspj | int == 0 ) %}
+          ['lvm_lv_create']
+          # {% elif (s_flvftsz | int >= 5) and (s_flvfspj | int >= 90 ) %}
+          # Opcion 2 #['lvm_add_disk_ext_vg']
+          # {% else %}
+          # Opcion 3 #['lvm_add_disk']
+          {% endif %}
+
+    - name: Resultado de la validacion del LV {{ lvnombre }}, se ejecutara el libre de jugadas - {{ run_playbook }}
+      include_tasks: "{{ tareas2 }}.yml"
+      loop: "{{ run_playbook }}"
+      loop_control:
+        loop_var: tareas2

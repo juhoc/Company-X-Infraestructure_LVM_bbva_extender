@@ -1,0 +1,26 @@
+---
+#------------------Particinar Disco para VGAPPS------------------#
+- block:
+    - name: Valida el tamaño de {{ lvnombre }}
+      become: true
+      shell: "{{ lvchecksz }}"
+      register: lvinfo1
+
+    - name: Valida el porcetaje de uso de {{ lvnombre }}
+      become: true
+      shell: "{{ lvcheckpj }}"
+      register: lvinfo2
+
+    - set_fact:
+        s_flvftsz: "{{ lvinfo1.stdout | default('0') | trim }}"
+        s_flvfspj: "{{ lvinfo2.stdout | default('0') | trim }}"
+
+    - name: Extender el {{ lvnombre }} a {{ lvcapacidad }}G
+      become: true
+      lvol:
+        vg: "{{ vgnombre }}"
+        lv: "{{ lvnombre }}"
+        size: "{{ lvcapacidad }}g"
+        resizefs: true
+        shrink: false
+      when: "lvcapacidad | int > s_flvftsz | int"

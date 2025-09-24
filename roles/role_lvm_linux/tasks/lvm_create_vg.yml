@@ -1,0 +1,46 @@
+---
+#------------------Valide si existe el VGAPPS------------------#
+- block:
+    - name: Valida si existe el {{ lvnombre }}
+      become: true
+      shell: "{{ lvchecknm }}"
+      register: lvinfo1
+
+    - set_fact:
+        s_flvfdnm: "{{ lvinfo1.stdout }}"
+
+    - name: Resultado de la validar antes de crear el LV {{ lvnombre }}
+      assert:
+        that:
+          - "'ITEMS_KO' in s_flvfdnm"
+        fail_msg: "El LV y Punto de montura {{ lvnombre }},{{ mpnombre }} ya estan creados, indique otros nombres"
+        success_msg: "El LV y Punto de montura {{ lvnombre }},{{ mpnombre }} no existen, se continua con las siguites tareas"
+
+    - name: Validar si existe {{ vgnombre }}
+      become: true
+      shell: "{{ vgchecknm }}"
+      register: vginfo1
+    
+    - name: Validar espacio libre en el {{ vgnombre }}
+      become: true
+      shell: "{{ vgchecksz }}"
+      register: vginfo2
+
+    - set_fact:
+        s_fvgn: "{{ vginfo1.stdout | default() | trim }}"
+        s_fvgf: "{{ vginfo2.stdout | default('0') | trim }}"
+
+    - set_fact:
+        s_fvgrsz: "{{ (s_fvgf | float - lvcapacidad | float) | int }}"
+
+    - set_fact:
+        run_playbook: |
+          {% if (s_fvgn == 'NON_FOUND_VGAPPS') and (s_fvgrsz | int < 0) %}
+          ['lvm_add_disk']
+          {% endif %}
+
+    - name: Resultado de la validacion del VGAPPS y el {{ lvnombre }}, se ejecutara el libre de jugadas - {{ run_playbook }}
+      include_tasks: "{{ tareas1 }}.yml"
+      loop: "{{ run_playbook }}"
+      loop_control:
+        loop_var: tareas1

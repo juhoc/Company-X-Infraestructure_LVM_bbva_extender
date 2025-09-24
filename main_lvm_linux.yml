@@ -1,0 +1,8 @@
+---
+- name: PlayBook Maestro - Gestio de Logical Volume Manager
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - include_role:
+        name: role_lvm_linux

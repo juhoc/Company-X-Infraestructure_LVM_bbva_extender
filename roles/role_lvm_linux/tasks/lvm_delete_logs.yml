@@ -1,0 +1,17 @@
+- name: Buscar archivos LOG VMWare DataStore
+  become: true
+  find:
+    paths: "{{ varoptasb }}"
+    patterns: "vm_search_*.log"
+    age: 3d
+    age_stamp: mtime
+    file_type: file
+    recurse: no
+  register: archlogvm
+
+- name: Borrar archivos LOG VMWare DataStore
+  become: true
+  file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ archlogvm.files }}"

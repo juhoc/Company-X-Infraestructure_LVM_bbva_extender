@@ -1,0 +1,40 @@
+#---variables-emcuesta---
+#varoptasb: /var/opt/ansible
+snapdisks: /tmp
+homeusrasb: ~/
+lvnombre: "{{ lvn }}"
+lvcapacidad: "{{ lvsz }}"
+vgnombre: "{{ vgn }}"
+vgcapacidad: "{{ vgsz }}"
+mpnombre: "{{ mpn }}"
+fstipo: "{{ fst }}"
+#---varriables-comandos-sistema_operativo---
+vgchecknm: "if vgs | grep -wq {{ vgnombre }}; then echo {{ vgnombre }}; else echo NON_FOUND_VGAPPS; fi"
+vgchecksz: "vgs --units g | grep -w {{ vgnombre }} | tr -s ' <' , | cut -d, -f8 | cut -d. -f1"
+lvchecknm: 'if df | grep -qw {{ vgnombre }}-{{ lvnombre }} && df | grep -qw {{ mpnombre }}; then echo "ITEMS_OK"; else echo "ITEMS_KO"; fi'
+lvchecksz: "df -h | tr -s ' %-' , | cut -d, -f2,3,6,7 | grep -w {{ lvnombre }},[0-9]...,[0-9],{{ mpnombre }} | cut -d, -f2 | tr -d 'gG' | cut -d. -f1"
+lvcheckpj: "df -h | tr -s ' %-' , | cut -d, -f2,3,6,7 | grep -w {{ lvnombre }},[0-9]...,[0-9],{{ mpnombre }} | cut -d, -f3"
+scandevices: 'for host in /sys/class/scsi_host/host*; do echo "- - -" | tee $host/scan; done'
+chknwdsk: "lsblk -rn -o NAME,TYPE,SIZE,FSTYPE,MOUNTPOINT | sort | grep disk | tr -s ' ' , | cut -d, -f1,2,3"
+diffdisk: "sdiff {{ snapdisks }}/snapdisk_post {{ snapdisks }}/snapdisk_prev | grep '<'"
+pvvgdsks: 'pvs | grep {{ vgnombre }} | cut -d " " -f3'
+#---variables-objetos-sistema_operativo---
+varoptasbd: /var/opt/ansible/
+varoptasbf: /var/opt/ansible
+#---variables-objetos-ansible-password---
+# usrvcvm: "cb\\bvmwiat2"
+# pwdvcvm: !vault |
+#   $ANSIBLE_VAULT;1.1;AES256
+#   38356331643465336638366266663438303564343032383635336366656335376139333261643465
+#   3234653834373935393366613130633161323631356664370a643435663235363230393762663862
+#   35323634626365386432383634666562323439373539633161616261653561613165333564643133
+#   6465333161383966650a343061626439623063376233323861646465623037333935626435303865
+#   37656365366539653739333061623161376336343532636264356639393063383333
+usrvcvm: "cb\\csico4gt"
+pwdvcvm: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  64636661626463613662303662626265313362633736313936623938623933613937653761343638
+  3537386666373666373637663136313235646561353932370a663062373536393137363164623236
+  64353934383064646230326536316466386236323836643264613033366636616563386133623738
+  3236323962636330660a303638653439663964323535653565623234356434633332643932303139
+  6438

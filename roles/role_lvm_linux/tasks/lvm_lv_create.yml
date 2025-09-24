@@ -1,0 +1,31 @@
+---
+#------------------Crear LV desde el VGAPPS existente------------------#
+- block:
+    - name: Crear LogicaVolume {{ lvnombre }}
+      become: true
+      lvol:
+        vg: "{{ vgnombre }}"
+        lv: "{{ lvnombre }}"
+        size: "{{ lvcapacidad }}g"
+        force: yes
+
+    - name: Crear punto de montura {{ mpnombre }}
+      become: true
+      file:
+        path: "{{ mpnombre }}"
+        state: directory
+        mode: "0755"
+
+    - name: Formatear LogicaVolume {{ lvnombre }}-{{ fstipo }}
+      become: true
+      filesystem:
+        fstype: "{{ fstipo }}"
+        dev: "/dev/{{ vgnombre }}/{{ lvnombre }}"
+
+    - name: Montar el LogicaVolume {{ lvnombre }}-{{ mpnombre }}
+      become: true
+      mount:
+        path: "{{ mpnombre }}"
+        src: "/dev/{{ vgnombre }}/{{ lvnombre }}"
+        fstype: "{{ fstipo }}"
+        state: mounted
