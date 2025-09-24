@@ -116,32 +116,27 @@
         vg: "{{ vgnombre }}"
         pvs: "{{ all_pvs }}"
 
-    - name: Crear LogicaVolume {{ lvnombre }}
+    - name: Valida el tamaño de {{ lvnombre }}
+      become: true
+      shell: "{{ lvchecksz }}"
+      register: lvinfo1
+
+    - name: Valida el porcetaje de uso de {{ lvnombre }}
+      become: true
+      shell: "{{ lvcheckpj }}"
+      register: lvinfo2
+
+    - set_fact:
+        s_flvftsz: "{{ lvinfo1.stdout | default('0') | trim }}"
+        s_flvfspj: "{{ lvinfo2.stdout | default('0') | trim }}"
+
+    - name: Extender el {{ lvnombre }} a {{ lvcapacidad }}G
       become: true
       lvol:
         vg: "{{ vgnombre }}"
         lv: "{{ lvnombre }}"
         size: "{{ lvcapacidad }}g"
-        force: yes
-
-    - name: Crear punto de montura {{ mpnombre }}
-      become: true
-      file:
-        path: "{{ mpnombre }}"
-        state: directory
-        mode: "0755"
-
-    - name: Formatear LogicaVolume {{ lvnombre }}-{{ fstipo }}
-      become: true
-      filesystem:
-        fstype: "{{ fstipo }}"
-        dev: "/dev/{{ vgnombre }}/{{ lvnombre }}"
-
-    - name: Montar el LogicaVolume {{ lvnombre }}-{{ mpnombre }}
-      become: true
-      mount:
-        path: "{{ mpnombre }}"
-        src: "/dev/{{ vgnombre }}/{{ lvnombre }}"
-        fstype: "{{ fstipo }}"
-        state: mounted
+        resizefs: true
+        shrink: false
+      when: "lvcapacidad | int > s_flvftsz | int"
 
