@@ -17,12 +17,8 @@
 
 - set_fact:
     run_playbook: |
-      {% if tarea == 'Crear_VGAPPS' %}
-      ['lvm_create_vg']
-      {% elif tarea == 'Crear_LVNAME' %}
-      ['lvm_create_lv']
-      {% elif tarea == 'Extender_LVNAME' %}
-      ['lvm_ext_lv']
+      {% if tarea == 'Exteder_VG' %}
+      ['lvm_ext_vg']
       {% else %}
       ['No_selecciono_ninguna_tarea']
       {% endif %}
